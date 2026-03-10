@@ -207,6 +207,9 @@ func TestHookScriptMultilineCommand(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not available")
 	}
+	if _, err := exec.LookPath("snip"); err != nil {
+		t.Skip("snip not available")
+	}
 
 	// Write the hook to a temp file (simulates snip init).
 	dir := t.TempDir()
