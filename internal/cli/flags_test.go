@@ -53,6 +53,37 @@ func TestParseFlags(t *testing.T) {
 			wantFlags: Flags{Verbose: 1, UltraCompact: true},
 			wantArgs:  []string{"git", "status"},
 		},
+		// "--" separator: everything after it is passed verbatim to the command.
+		{
+			name:      "double dash passes remaining verbatim",
+			args:      []string{"--", "opencode", "--help"},
+			wantFlags: Flags{},
+			wantArgs:  []string{"opencode", "--help"},
+		},
+		{
+			name:      "snip flags before double dash, command flags after",
+			args:      []string{"-v", "--", "go", "test", "--version"},
+			wantFlags: Flags{Verbose: 1},
+			wantArgs:  []string{"go", "test", "--version"},
+		},
+		{
+			name:      "double dash alone produces empty remaining",
+			args:      []string{"--"},
+			wantFlags: Flags{},
+			wantArgs:  nil,
+		},
+		{
+			name:      "double dash before --help prevents snip help",
+			args:      []string{"--", "--help"},
+			wantFlags: Flags{},
+			wantArgs:  []string{"--help"},
+		},
+		{
+			name:      "double dash before -v prevents snip verbose",
+			args:      []string{"--", "-v", "git", "log"},
+			wantFlags: Flags{},
+			wantArgs:  []string{"-v", "git", "log"},
+		},
 	}
 
 	for _, tt := range tests {

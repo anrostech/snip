@@ -12,11 +12,19 @@ type Flags struct {
 }
 
 // ParseFlags extracts global flags from args and returns remaining args.
+// A "--" separator stops flag parsing: everything after it is passed
+// verbatim to the underlying command, preventing snip from consuming
+// flags like --help or --version that belong to the proxied tool.
 func ParseFlags(args []string) (Flags, []string) {
 	var flags Flags
 	var remaining []string
 
-	for _, arg := range args {
+	for i, arg := range args {
+		if arg == "--" {
+			// Everything after "--" belongs to the underlying command.
+			remaining = append(remaining, args[i+1:]...)
+			break
+		}
 		switch {
 		case arg == "-vv":
 			flags.Verbose = 2

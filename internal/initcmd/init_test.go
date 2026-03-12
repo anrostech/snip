@@ -243,8 +243,8 @@ func TestHookScriptMultilineCommand(t *testing.T) {
 	updated, _ := hookOut["updatedInput"].(map[string]any)
 	rewritten, _ := updated["command"].(string)
 
-	if !strings.HasPrefix(rewritten, "snip git add ") {
-		t.Errorf("expected rewritten command to start with 'snip git add', got: %s", rewritten)
+	if !strings.HasPrefix(rewritten, "snip -- git add ") {
+		t.Errorf("expected rewritten command to start with 'snip -- git add', got: %s", rewritten)
 	}
 }
 

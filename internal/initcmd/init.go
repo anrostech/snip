@@ -49,8 +49,10 @@ BASE=$(echo "$BARE_CMD" | awk '{print $1}')
 REWRITE=""
 case "$BASE" in
   git|go|cargo|npm|npx|yarn|pnpm|docker|kubectl|make|pip|pytest|jest|tsc|eslint|rustc)
-    # Rewrite: prefix with snip
-    REWRITE=$(echo "$CMD" | sed "s|$BARE_CMD|snip $BARE_CMD|")
+    # Rewrite: prefix with "snip --" so flags like --help or --version in the
+    # original command are passed verbatim to the underlying tool, not parsed
+    # by snip itself.
+    REWRITE=$(echo "$CMD" | sed "s|$BARE_CMD|snip -- $BARE_CMD|")
     ;;
 esac
 
