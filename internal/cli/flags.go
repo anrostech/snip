@@ -43,7 +43,8 @@ func ParseFlags(args []string) (Flags, []string) {
 		case isStackedVerboseFlag(arg):
 			flags.Verbose = strings.Count(arg, "v")
 		default:
-			remaining = append(remaining, arg)
+			remaining = append(remaining, args[i:]...)
+			return flags, remaining
 		}
 	}
 

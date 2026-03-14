@@ -53,6 +53,18 @@ func TestParseFlags(t *testing.T) {
 			wantFlags: Flags{Verbose: 1, UltraCompact: true},
 			wantArgs:  []string{"git", "status"},
 		},
+		{
+			name:      "command help flag is passed through",
+			args:      []string{"npx", "-y", "chrome-devtools-mcp@latest", "--help"},
+			wantFlags: Flags{},
+			wantArgs:  []string{"npx", "-y", "chrome-devtools-mcp@latest", "--help"},
+		},
+		{
+			name:      "global flags stop parsing at command",
+			args:      []string{"-v", "npx", "-y", "chrome-devtools-mcp@latest", "--help"},
+			wantFlags: Flags{Verbose: 1},
+			wantArgs:  []string{"npx", "-y", "chrome-devtools-mcp@latest", "--help"},
+		},
 		// "--" separator: everything after it is passed verbatim to the command.
 		{
 			name:      "double dash passes remaining verbatim",
