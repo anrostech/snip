@@ -148,6 +148,19 @@ Supported commands: `git`, `go`, `cargo`, `npm`, `npx`, `yarn`, `pnpm`, `docker`
 snip init --uninstall   # remove the hook
 ```
 
+### OpenCode
+
+Install the [opencode-snip](https://github.com/VincentHardouin/opencode-snip) plugin by adding it to your OpenCode config (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-snip@latest"]
+}
+```
+
+The plugin uses the `tool.execute.before` hook to automatically prefix supported commands with `snip`.
+
 ### Cursor
 
 Cursor supports hooks since v1.7 via `~/.cursor/hooks.json`:
