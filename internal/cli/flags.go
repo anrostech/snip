@@ -45,10 +45,8 @@ func ParseFlags(args []string) (Flags, []string) {
 		case len(remaining) == 0 && isBuiltInCommand(arg) && i+1 < len(args) && isInfoFlag(args[i+1]):
 			remaining = append(remaining, arg)
 		default:
-			// Non-flag argument: keep it for the underlying command,
-			// but continue scanning for global flags (help/version/etc.)
-			// unless we've seen a "--" separator.
-			remaining = append(remaining, arg)
+			remaining = append(remaining, args[i:]...)
+			return flags, remaining
 		}
 	}
 
