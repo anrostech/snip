@@ -77,3 +77,51 @@ func TestPassthroughExitCode(t *testing.T) {
 		t.Errorf("exit code = %d, want 7", code)
 	}
 }
+
+func TestExecuteShellBuiltin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	result, err := Execute("export", []string{"FOO=bar"})
+	if err != nil {
+		t.Fatalf("unexpected error executing shell builtin: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", result.ExitCode)
+	}
+}
+
+func TestPassthroughShellBuiltin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skip on windows")
+	}
+	code, err := Passthrough("export", []string{"FOO=bar"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+}
+
+func TestMakeCommandBuiltin(t *testing.T) {
+	cmd := makeCommand("export", []string{"A=1", "B=2"})
+	if cmd.Path == "" {
+		t.Fatal("command path should not be empty")
+	}
+	// Should wrap with sh -c
+	if cmd.Args[0] != "sh" {
+		t.Errorf("expected sh wrapper, got %q", cmd.Args[0])
+	}
+	if cmd.Args[1] != "-c" {
+		t.Errorf("expected -c flag, got %q", cmd.Args[1])
+	}
+}
+
+func TestMakeCommandRegular(t *testing.T) {
+	cmd := makeCommand("git", []string{"status"})
+	// Should NOT wrap with sh
+	if len(cmd.Args) > 0 && cmd.Args[0] == "sh" {
+		t.Error("regular commands should not be wrapped with sh")
+	}
+}

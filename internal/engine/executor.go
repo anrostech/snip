@@ -17,11 +17,44 @@ type Result struct {
 	Duration time.Duration
 }
 
+// shellBuiltins lists commands that are shell built-ins and cannot be
+// executed directly via exec.Command.
+var shellBuiltins = map[string]bool{
+	"export":   true,
+	"unset":    true,
+	"source":   true,
+	"alias":    true,
+	"unalias":  true,
+	"cd":       true,
+	"eval":     true,
+	"set":      true,
+	"shopt":    true,
+	"declare":  true,
+	"local":    true,
+	"readonly": true,
+	"typeset":  true,
+	"ulimit":   true,
+	"umask":    true,
+}
+
+// makeCommand creates an exec.Cmd, wrapping shell built-ins with sh -c
+// so they can be executed. Shell built-ins like "export" have no binary
+// in $PATH and would fail with exec.Command directly.
+func makeCommand(command string, args []string) *exec.Cmd {
+	if shellBuiltins[command] {
+		shArgs := make([]string, 0, len(args)+3)
+		shArgs = append(shArgs, "-c", command+` "$@"`, "_")
+		shArgs = append(shArgs, args...)
+		return exec.Command("sh", shArgs...)
+	}
+	return exec.Command(command, args...)
+}
+
 // Execute runs a command, capturing stdout and stderr concurrently via goroutines.
 func Execute(command string, args []string) (*Result, error) {
 	start := time.Now()
 
-	cmd := exec.Command(command, args...)
+	cmd := makeCommand(command, args)
 	// Don't connect stdin for captured commands — prevents blocking on
 	// commands that don't read stdin (most filtered commands).
 	// Passthrough commands still get stdin via the Passthrough function.
@@ -74,7 +107,7 @@ func Execute(command string, args []string) (*Result, error) {
 
 // Passthrough runs a command with inherited stdio (no capture).
 func Passthrough(command string, args []string) (int, error) {
-	cmd := exec.Command(command, args...)
+	cmd := makeCommand(command, args)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
