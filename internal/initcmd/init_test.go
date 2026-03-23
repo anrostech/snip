@@ -196,38 +196,33 @@ func TestUnpatchPreservesOtherHooks(t *testing.T) {
 	}
 }
 
-// TestHookScriptMultilineCommand verifies that the installed hook script handles
-// multiline commands (e.g. git commit with a heredoc) without error.
-// Previously, xargs was used to trim whitespace from FIRST_CMD and would fail
-// with exit 1 on unmatched quotes present in heredoc body lines.
-func TestHookScriptMultilineCommand(t *testing.T) {
+func runHookScript(t *testing.T, cmd string) string {
+	t.Helper()
+
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not available")
 	}
-	if _, err := exec.LookPath("snip"); err != nil {
-		t.Skip("snip not available")
-	}
 
-	// Write the hook to a temp file (simulates snip init).
 	dir := t.TempDir()
 	hookPath := filepath.Join(dir, "snip-rewrite.sh")
 	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
 		t.Fatalf("write hook: %v", err)
 	}
+	snipPath := filepath.Join(dir, "snip")
+	if err := os.WriteFile(snipPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake snip: %v", err)
+	}
 
-	// Simulate the JSON Claude Code sends for a heredoc-style git commit.
-	// The multiline command contains an unmatched `)"` on the last line,
-	// which caused xargs to exit 1 (unmatched double quote).
-	cmd := "git add file.go && git commit -m \"$(cat <<'EOF'\n   fix: something\n\n   Co-Authored-By: Bot <bot@example.com>\n   EOF\n   )\""
 	payload, _ := json.Marshal(map[string]any{
 		"tool_name":  "Bash",
 		"tool_input": map[string]any{"command": cmd},
 	})
 
 	proc := exec.Command("bash", hookPath)
+	proc.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	proc.Stdin = strings.NewReader(string(payload))
 	output, runErr := proc.Output()
 	if runErr != nil {
@@ -242,9 +237,40 @@ func TestHookScriptMultilineCommand(t *testing.T) {
 	hookOut, _ := result["hookSpecificOutput"].(map[string]any)
 	updated, _ := hookOut["updatedInput"].(map[string]any)
 	rewritten, _ := updated["command"].(string)
+	return rewritten
+}
+
+// TestHookScriptMultilineCommand verifies that the installed hook script handles
+// multiline commands (e.g. git commit with a heredoc) without error.
+// Previously, xargs was used to trim whitespace from FIRST_CMD and would fail
+// with exit 1 on unmatched quotes present in heredoc body lines.
+func TestHookScriptMultilineCommand(t *testing.T) {
+	// Simulate the JSON Claude Code sends for a heredoc-style git commit.
+	// The multiline command contains an unmatched `)"` on the last line,
+	// which caused xargs to exit 1 (unmatched double quote).
+	cmd := "git add file.go && git commit -m \"$(cat <<'EOF'\n   fix: something\n\n   Co-Authored-By: Bot <bot@example.com>\n   EOF\n   )\""
+	rewritten := runHookScript(t, cmd)
 
 	if !strings.HasPrefix(rewritten, "snip -- git add ") {
 		t.Errorf("expected rewritten command to start with 'snip -- git add', got: %s", rewritten)
+	}
+}
+
+func TestHookScriptInlinePythonDoesNotRewriteQuotedSemicolons(t *testing.T) {
+	cmd := "git commit -m \"$(python3 -c \\\"from pathlib import Path; import sys; print(Path('.').name); print(sys.version)\\\")\" && git status"
+	rewritten := runHookScript(t, cmd)
+
+	if !strings.HasPrefix(rewritten, "snip -- git commit ") {
+		t.Fatalf("expected rewritten command to start with 'snip -- git commit', got: %s", rewritten)
+	}
+	if strings.Count(rewritten, "snip --") != 1 {
+		t.Fatalf("expected exactly one snip injection, got: %s", rewritten)
+	}
+	if strings.Contains(rewritten, "; snip") {
+		t.Fatalf("expected inline python to stay unchanged, got: %s", rewritten)
+	}
+	if strings.Contains(rewritten, "python3 snip") {
+		t.Fatalf("expected inline python command to stay unchanged, got: %s", rewritten)
 	}
 }
 

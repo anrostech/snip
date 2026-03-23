@@ -22,6 +22,75 @@ fi
 
 set -euo pipefail
 
+leading_ws_len() {
+  local input="$1"
+  local len=${#input}
+  local i=0
+
+  while [ $i -lt $len ]; do
+    case "${input:$i:1}" in
+      [[:space:]]) i=$((i + 1)) ;;
+      *) break ;;
+    esac
+  done
+
+  printf '%s' "$i"
+}
+
+trailing_ws_len() {
+  local input="$1"
+  local i=$((${#input} - 1))
+  local count=0
+
+  while [ $i -ge 0 ]; do
+    case "${input:$i:1}" in
+      [[:space:]])
+        count=$((count + 1))
+        i=$((i - 1))
+        ;;
+      *) break ;;
+    esac
+  done
+
+  printf '%s' "$count"
+}
+
+extract_first_segment() {
+  local input="$1"
+  local len=${#input}
+  local i=0
+  local quote=""
+  local ch
+
+  while [ $i -lt $len ]; do
+    ch="${input:$i:1}"
+
+    if [ -n "$quote" ]; then
+      if [ "$ch" = "\\" ] && [ "$quote" = '"' ]; then
+        i=$((i + 2))
+        continue
+      fi
+
+      if [ "$ch" = "$quote" ]; then
+        quote=""
+      fi
+
+      i=$((i + 1))
+      continue
+    fi
+
+    case "$ch" in
+      "'") quote="'" ;;
+      '"') quote='"' ;;
+      ';'|'|'|'&') break ;;
+    esac
+
+    i=$((i + 1))
+  done
+
+  printf '%s' "${input:0:i}"
+}
+
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
@@ -30,9 +99,20 @@ if [ -z "$CMD" ]; then
   exit 0
 fi
 
-# Extract the first command (before && or | or ;)
-# head -1 prevents xargs from seeing heredoc body lines with unmatched quotes
-FIRST_CMD=$(echo "$CMD" | head -1 | sed 's/[;&|].*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+# Extract the first command segment, ignoring separators inside quotes.
+# head -1 keeps heredoc bodies out of the scan.
+FIRST_LINE=$(printf '%s\n' "$CMD" | head -1)
+FIRST_SEGMENT=$(extract_first_segment "$FIRST_LINE")
+LEADING_WS_LEN=$(leading_ws_len "$FIRST_SEGMENT")
+TRAILING_WS_LEN=$(trailing_ws_len "$FIRST_SEGMENT")
+FIRST_CMD_LEN=$((${#FIRST_SEGMENT} - LEADING_WS_LEN - TRAILING_WS_LEN))
+if [ $FIRST_CMD_LEN -lt 0 ]; then
+  FIRST_CMD_LEN=0
+fi
+FIRST_PREFIX="${FIRST_SEGMENT:0:LEADING_WS_LEN}"
+FIRST_CMD="${FIRST_SEGMENT:LEADING_WS_LEN:FIRST_CMD_LEN}"
+FIRST_SUFFIX_START=$((LEADING_WS_LEN + FIRST_CMD_LEN))
+FIRST_SUFFIX="${FIRST_SEGMENT:FIRST_SUFFIX_START}"
 
 # Skip if already using snip
 case "$FIRST_CMD" in
@@ -40,7 +120,8 @@ case "$FIRST_CMD" in
 esac
 
 # Strip leading env var assignments (e.g. CGO_ENABLED=0 go test)
-BARE_CMD=$(echo "$FIRST_CMD" | sed 's/^[A-Za-z_][A-Za-z0-9_]*=[^ ]* *//')
+ENV_PREFIX=$(printf '%s' "$FIRST_CMD" | sed -E 's/^(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]*)*).*/\1/')
+BARE_CMD="${FIRST_CMD:${#ENV_PREFIX}}"
 
 # Extract the base command name
 BASE=$(echo "$BARE_CMD" | awk '{print $1}')
@@ -52,7 +133,8 @@ case "$BASE" in
     # Rewrite: prefix with "snip --" so flags like --help or --version in the
     # original command are passed verbatim to the underlying tool, not parsed
     # by snip itself.
-    REWRITE=$(echo "$CMD" | sed "s|$BARE_CMD|snip -- $BARE_CMD|")
+    REST="${CMD:${#FIRST_SEGMENT}}"
+    REWRITE="${FIRST_PREFIX}${ENV_PREFIX}snip -- ${BARE_CMD}${FIRST_SUFFIX}${REST}"
     ;;
 esac
 
