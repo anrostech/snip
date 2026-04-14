@@ -2,6 +2,7 @@ package initcmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,7 +197,9 @@ func TestUnpatchPreservesOtherHooks(t *testing.T) {
 	}
 }
 
-func runHookScript(t *testing.T, cmd string) string {
+// runHookScript runs the hook script and returns the rewritten command and the
+// snip binary path used, so callers can build exact expected prefixes.
+func runHookScript(t *testing.T, cmd string) (rewritten, snipPath string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -207,13 +210,13 @@ func runHookScript(t *testing.T, cmd string) string {
 	}
 
 	dir := t.TempDir()
-	hookPath := filepath.Join(dir, "snip-rewrite.sh")
-	if err := os.WriteFile(hookPath, []byte(hookScript), 0755); err != nil {
-		t.Fatalf("write hook: %v", err)
-	}
-	snipPath := filepath.Join(dir, "snip")
+	snipPath = filepath.Join(dir, "snip")
 	if err := os.WriteFile(snipPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 		t.Fatalf("write fake snip: %v", err)
+	}
+	hookPath := filepath.Join(dir, "snip-rewrite.sh")
+	if err := os.WriteFile(hookPath, []byte(generateHookScript(snipPath)), 0755); err != nil {
+		t.Fatalf("write hook: %v", err)
 	}
 
 	payload, _ := json.Marshal(map[string]any{
@@ -236,8 +239,59 @@ func runHookScript(t *testing.T, cmd string) string {
 
 	hookOut, _ := result["hookSpecificOutput"].(map[string]any)
 	updated, _ := hookOut["updatedInput"].(map[string]any)
-	rewritten, _ := updated["command"].(string)
-	return rewritten
+	rewritten, _ = updated["command"].(string)
+	return rewritten, snipPath
+}
+
+// runHookScriptRaw runs the hook script and returns raw stdout bytes without
+// expecting JSON output. Used to test cases where no rewrite should occur.
+func runHookScriptRaw(t *testing.T, snipPath, cmd string) []byte {
+	t.Helper()
+
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	dir := t.TempDir()
+	hookPath := filepath.Join(dir, "snip-rewrite.sh")
+	if err := os.WriteFile(hookPath, []byte(generateHookScript(snipPath)), 0755); err != nil {
+		t.Fatalf("write hook: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"tool_name":  "Bash",
+		"tool_input": map[string]any{"command": cmd},
+	})
+
+	proc := exec.Command("bash", hookPath)
+	proc.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	proc.Stdin = strings.NewReader(string(payload))
+	output, runErr := proc.Output()
+	if runErr != nil {
+		t.Fatalf("hook exited non-zero: %v", runErr)
+	}
+	return output
+}
+
+// TestHookScriptNoDoubleRewrite verifies that a command already rewritten by the
+// hook (prefixed with the quoted snip path) is not rewritten a second time.
+func TestHookScriptNoDoubleRewrite(t *testing.T) {
+	dir := t.TempDir()
+	snipPath := filepath.Join(dir, "snip")
+	if err := os.WriteFile(snipPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake snip: %v", err)
+	}
+
+	// Simulate a command already rewritten by the hook (quoted absolute path)
+	alreadyRewritten := fmt.Sprintf("%q -- git status", snipPath)
+	output := runHookScriptRaw(t, snipPath, alreadyRewritten)
+
+	if len(strings.TrimSpace(string(output))) != 0 {
+		t.Errorf("expected no rewrite for already-rewritten command, got: %s", output)
+	}
 }
 
 // TestHookScriptMultilineCommand verifies that the installed hook script handles
@@ -249,21 +303,24 @@ func TestHookScriptMultilineCommand(t *testing.T) {
 	// The multiline command contains an unmatched `)"` on the last line,
 	// which caused xargs to exit 1 (unmatched double quote).
 	cmd := "git add file.go && git commit -m \"$(cat <<'EOF'\n   fix: something\n\n   Co-Authored-By: Bot <bot@example.com>\n   EOF\n   )\""
-	rewritten := runHookScript(t, cmd)
+	rewritten, snipPath := runHookScript(t, cmd)
 
-	if !strings.HasPrefix(rewritten, "snip -- git add ") {
-		t.Errorf("expected rewritten command to start with 'snip -- git add', got: %s", rewritten)
+	expectedPrefix := fmt.Sprintf("%q -- git add ", snipPath)
+	if !strings.HasPrefix(rewritten, expectedPrefix) {
+		t.Errorf("expected rewritten command to start with %q, got: %s", expectedPrefix, rewritten)
 	}
 }
 
 func TestHookScriptInlinePythonDoesNotRewriteQuotedSemicolons(t *testing.T) {
 	cmd := "git commit -m \"$(python3 -c \\\"from pathlib import Path; import sys; print(Path('.').name); print(sys.version)\\\")\" && git status"
-	rewritten := runHookScript(t, cmd)
+	rewritten, snipPath := runHookScript(t, cmd)
 
-	if !strings.HasPrefix(rewritten, "snip -- git commit ") {
-		t.Fatalf("expected rewritten command to start with 'snip -- git commit', got: %s", rewritten)
+	expectedPrefix := fmt.Sprintf("%q -- git commit ", snipPath)
+	if !strings.HasPrefix(rewritten, expectedPrefix) {
+		t.Fatalf("expected rewritten command to start with %q, got: %s", expectedPrefix, rewritten)
 	}
-	if strings.Count(rewritten, "snip --") != 1 {
+	quotedBin := fmt.Sprintf("%q", snipPath)
+	if strings.Count(rewritten, quotedBin) != 1 {
 		t.Fatalf("expected exactly one snip injection, got: %s", rewritten)
 	}
 	if strings.Contains(rewritten, "; snip") {
@@ -271,6 +328,59 @@ func TestHookScriptInlinePythonDoesNotRewriteQuotedSemicolons(t *testing.T) {
 	}
 	if strings.Contains(rewritten, "python3 snip") {
 		t.Fatalf("expected inline python command to stay unchanged, got: %s", rewritten)
+	}
+}
+
+// TestPatchSettingsWindowsPath verifies that patchSettings normalizes backslashes
+// to forward slashes in the hook command path written to settings.json, so the
+// path is valid for bash on all platforms including Windows.
+func TestPatchSettingsWindowsPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	// Simulate a Windows-style backslash path
+	hookPath := `C:\Users\joedoe\.claude\hooks\snip-rewrite.sh`
+
+	err := patchSettings(path, hookPath)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+
+	settings := readSettings(t, path)
+	hooks := settings["hooks"].(map[string]any)
+	preToolUse := hooks["PreToolUse"].([]any)
+	entry := preToolUse[0].(map[string]any)
+	entryHooks := entry["hooks"].([]any)
+	hook := entryHooks[0].(map[string]any)
+	cmd := hook["command"].(string)
+
+	if strings.Contains(cmd, `\`) {
+		t.Errorf("command should not contain backslashes, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "/") {
+		t.Errorf("command should contain forward slashes, got: %s", cmd)
+	}
+}
+
+// TestGenerateHookScriptEmbedsBin verifies that generateHookScript embeds the
+// absolute snip binary path as SNIP_BIN in the generated script, and does not
+// reference bare "snip" as a command so the hook works regardless of $PATH.
+func TestGenerateHookScriptEmbedsBin(t *testing.T) {
+	snipBin := "/usr/local/bin/snip"
+	script := generateHookScript(snipBin)
+
+	if !strings.Contains(script, `SNIP_BIN="/usr/local/bin/snip"`) {
+		t.Errorf("script should contain SNIP_BIN variable with path, got script:\n%s", script)
+	}
+
+	// Should not call bare 'snip' as a command (outside of comments)
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "snip ") || trimmed == "snip" {
+			t.Errorf("script should not reference bare 'snip' command, found line: %s", line)
+		}
 	}
 }
 
