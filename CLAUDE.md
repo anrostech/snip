@@ -118,3 +118,4 @@ git tag -a v0.1.1 -m "fix: description" && git push origin v0.1.1
 - TDD workflow: write test first, implement, refactor
 - Use context wrapping on errors: `fmt.Errorf("operation: %w", err)`
 - When adding a new built-in subcommand: add it to both the `switch` in `cli.go` AND `isBuiltInCommand` in `flags.go`
+- When changing user-facing behavior, filters, or architecture: update the GitHub wiki (`git clone https://github.com/edouard-claude/snip.wiki.git`) to stay in sync
