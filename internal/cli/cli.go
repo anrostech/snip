@@ -17,6 +17,7 @@ import (
 	"github.com/edouard-claude/snip/internal/initcmd"
 	"github.com/edouard-claude/snip/internal/tee"
 	"github.com/edouard-claude/snip/internal/tracking"
+	"github.com/edouard-claude/snip/internal/trust"
 	"github.com/edouard-claude/snip/internal/verify"
 )
 
@@ -122,6 +123,12 @@ func Run(args []string) int {
 	case "verify":
 		return verify.Run(cmdArgs)
 
+	case "trust":
+		return runTrust(cmdArgs)
+
+	case "untrust":
+		return runUntrust(cmdArgs)
+
 	case "proxy":
 		// Direct passthrough without filtering
 		if len(cmdArgs) == 0 {
@@ -226,6 +233,8 @@ Commands:
   discover     Scan sessions for missed filter opportunities
   verify       Run inline filter tests (--require-all to enforce coverage)
   config       Show current configuration
+  trust        Trust project-local filter file(s) by SHA-256 hash
+  untrust      Remove filter file(s) from the trust store
   proxy        Passthrough without filtering
 
 Init flags:
@@ -265,6 +274,155 @@ func unproxyableReason(command string) string {
 		return "it must run in the parent shell to modify the environment"
 	}
 	return ""
+}
+
+// runTrust handles the "snip trust [path]" subcommand.
+func runTrust(args []string) int {
+	var paths []string
+
+	if len(args) == 0 {
+		// Default: trust all YAML files in .snip/filters/ relative to cwd
+		cwd, err := os.Getwd()
+		if err != nil {
+			display.PrintError(fmt.Sprintf("get working directory: %v", err))
+			return 1
+		}
+		dir := filepath.Join(cwd, ".snip", "filters")
+		found, err := trust.FindFilterFiles(dir)
+		if err != nil {
+			display.PrintError(fmt.Sprintf("find filters in %s: %v", dir, err))
+			return 1
+		}
+		if len(found) == 0 {
+			display.PrintError(fmt.Sprintf("no YAML filter files found in %s", dir))
+			return 1
+		}
+		paths = found
+	} else {
+		for _, arg := range args {
+			info, err := os.Stat(arg)
+			if err != nil {
+				display.PrintError(fmt.Sprintf("stat %s: %v", arg, err))
+				return 1
+			}
+			if info.IsDir() {
+				found, err := trust.FindFilterFiles(arg)
+				if err != nil {
+					display.PrintError(fmt.Sprintf("find filters in %s: %v", arg, err))
+					return 1
+				}
+				paths = append(paths, found...)
+			} else {
+				paths = append(paths, arg)
+			}
+		}
+	}
+
+	if len(paths) == 0 {
+		display.PrintError("no filter files to trust")
+		return 1
+	}
+
+	store, err := trust.Load()
+	if err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	results, err := trust.Trust(store, paths)
+	if err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	if err := trust.Save(store); err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	for _, r := range results {
+		fmt.Printf("trusted: %s (sha256:%s)\n", r.Path, r.Hash)
+	}
+	return 0
+}
+
+// runUntrust handles the "snip untrust [path]" subcommand.
+func runUntrust(args []string) int {
+	var paths []string
+
+	if len(args) == 0 {
+		// Default: untrust all YAML files in .snip/filters/ relative to cwd
+		cwd, err := os.Getwd()
+		if err != nil {
+			display.PrintError(fmt.Sprintf("get working directory: %v", err))
+			return 1
+		}
+		dir := filepath.Join(cwd, ".snip", "filters")
+		found, err := trust.FindFilterFiles(dir)
+		if err != nil {
+			display.PrintError(fmt.Sprintf("find filters in %s: %v", dir, err))
+			return 1
+		}
+		if len(found) == 0 {
+			display.PrintError(fmt.Sprintf("no YAML filter files found in %s", dir))
+			return 1
+		}
+		paths = found
+	} else {
+		for _, arg := range args {
+			info, err := os.Stat(arg)
+			if err != nil {
+				// File might not exist on disk but could still be in the trust store
+				abs, absErr := filepath.Abs(arg)
+				if absErr == nil {
+					paths = append(paths, abs)
+				}
+				continue
+			}
+			if info.IsDir() {
+				found, err := trust.FindFilterFiles(arg)
+				if err != nil {
+					display.PrintError(fmt.Sprintf("find filters in %s: %v", arg, err))
+					return 1
+				}
+				paths = append(paths, found...)
+			} else {
+				paths = append(paths, arg)
+			}
+		}
+	}
+
+	if len(paths) == 0 {
+		display.PrintError("no filter files to untrust")
+		return 1
+	}
+
+	store, err := trust.Load()
+	if err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	removed, err := trust.Untrust(store, paths)
+	if err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	if err := trust.Save(store); err != nil {
+		display.PrintError(err.Error())
+		return 1
+	}
+
+	if len(removed) == 0 {
+		fmt.Println("no matching entries found in trust store")
+		return 0
+	}
+
+	for _, p := range removed {
+		fmt.Printf("untrusted: %s\n", p)
+	}
+	return 0
 }
 
 // Version returns the current version string.

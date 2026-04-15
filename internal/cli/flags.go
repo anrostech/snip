@@ -64,7 +64,7 @@ func isStackedVerboseFlag(arg string) bool {
 
 func isBuiltInCommand(arg string) bool {
 	switch arg {
-	case "init", "gain", "config", "proxy", "hook", "discover", "verify":
+	case "init", "gain", "config", "proxy", "hook", "discover", "verify", "trust", "untrust":
 		return true
 	default:
 		return false

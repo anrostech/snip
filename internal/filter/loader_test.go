@@ -4,7 +4,26 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/edouard-claude/snip/internal/trust"
 )
+
+// trustAllFiles creates a trust store with all YAML files in the given
+// directories pre-trusted. This avoids touching the real trust store on disk.
+func trustAllFiles(t *testing.T, dirs ...string) trust.Store {
+	t.Helper()
+	store := make(trust.Store)
+	for _, dir := range dirs {
+		files, err := trust.FindFilterFiles(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := trust.Trust(store, files); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
 
 func TestLoadUserFilters(t *testing.T) {
 	dir := t.TempDir()
@@ -148,7 +167,8 @@ on_error: "passthrough"
 		t.Fatal(err)
 	}
 
-	filters, err := LoadAll([]string{dir})
+	store := trustAllFiles(t, dir)
+	filters, err := LoadAllWithStore([]string{dir}, store)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +229,8 @@ on_error: "passthrough"
 		t.Fatal(err)
 	}
 
-	filters, err := LoadAll([]string{dir1, dir2})
+	store := trustAllFiles(t, dir1, dir2)
+	filters, err := LoadAllWithStore([]string{dir1, dir2}, store)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,4 +269,73 @@ func TestLoadAllEmptyDirs(t *testing.T) {
 	}
 	// Should not error even with no directories (EmbeddedFS is nil in tests)
 	_ = filters
+}
+
+func TestLoadAllSkipsUntrustedProjectLocal(t *testing.T) {
+	dir := t.TempDir()
+
+	yamlContent := `
+name: "untrusted-filter"
+version: 1
+match:
+  command: "evil"
+pipeline:
+  - action: "head"
+    n: 5
+on_error: "passthrough"
+`
+	if err := os.WriteFile(filepath.Join(dir, "evil.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use an empty trust store: file should be skipped
+	store := make(trust.Store)
+	filters, err := LoadAllWithStore([]string{dir}, store)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, f := range filters {
+		if f.Name == "untrusted-filter" {
+			t.Error("untrusted filter should have been skipped")
+		}
+	}
+}
+
+func TestLoadAllLoadsModifiedTrustedFile(t *testing.T) {
+	dir := t.TempDir()
+
+	yamlContent := `
+name: "trusted-filter"
+version: 1
+match:
+  command: "safe"
+pipeline:
+  - action: "head"
+    n: 5
+on_error: "passthrough"
+`
+	path := filepath.Join(dir, "safe.yaml")
+	if err := os.WriteFile(path, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trust the file
+	store := trustAllFiles(t, dir)
+
+	// Modify the file after trusting (simulates tampering)
+	if err := os.WriteFile(path, []byte(yamlContent+"\n# tampered"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	filters, err := LoadAllWithStore([]string{dir}, store)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, f := range filters {
+		if f.Name == "trusted-filter" {
+			t.Error("modified trusted filter should have been skipped (hash mismatch)")
+		}
+	}
 }
