@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -149,5 +152,41 @@ func TestBuildPipelineInputBoth(t *testing.T) {
 	got := buildPipelineInput(f, r)
 	if got != "out\nerr\n" {
 		t.Errorf("both streams: got %q, want %q", got, "out\nerr\n")
+	}
+}
+
+func TestPipelineRunSilentWhenFilterExcludedByFlags(t *testing.T) {
+	f := filter.Filter{
+		Name:    "true-json",
+		Version: 1,
+		Match:   filter.Match{Command: "true", RequireFlags: []string{"--json"}},
+		OnError: "passthrough",
+		Pipeline: filter.Pipeline{
+			{ActionName: "keep_lines", Params: map[string]any{"pattern": `.`}},
+		},
+	}
+	reg := filter.NewRegistry([]filter.Filter{f})
+	p := &Pipeline{
+		Registry:      reg,
+		QuietNoFilter: false, // messages enabled — bug would print here
+	}
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	p.Run("true", []string{})
+
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if strings.Contains(buf.String(), "no filter") {
+		t.Errorf("expected silent stderr when filter exists but excluded by flags, got: %q", buf.String())
 	}
 }
