@@ -68,6 +68,15 @@ func getInt(params map[string]any, key string, def int) int {
 	}
 }
 
+func getBool(params map[string]any, key string) bool {
+	v, ok := params[key]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 func compilePattern(params map[string]any, key string) (*regexp.Regexp, error) {
 	p := getStr(params, key)
 	if p == "" {
@@ -217,6 +226,12 @@ func groupBy(input ActionResult, params map[string]any) (ActionResult, error) {
 
 	meta := copyMeta(input.Metadata)
 	meta["groups"] = groups
+
+	// append mode: keep original lines and add group summary at the end
+	if getBool(params, "append") {
+		out = append(input.Lines, out...)
+	}
+
 	return ActionResult{Lines: out, Metadata: meta}, nil
 }
 
@@ -599,6 +614,12 @@ func aggregate(input ActionResult, params map[string]any) (ActionResult, error) 
 
 	meta := copyMeta(input.Metadata)
 	meta["stats"] = stats
+
+	// append mode: keep original lines and add aggregate summary at the end
+	if getBool(params, "append") {
+		out = append(input.Lines, out...)
+	}
+
 	return ActionResult{Lines: out, Metadata: meta}, nil
 }
 

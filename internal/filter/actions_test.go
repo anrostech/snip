@@ -130,6 +130,30 @@ func TestGroupBy(t *testing.T) {
 	}
 }
 
+func TestGroupByAppend(t *testing.T) {
+	input := lines("file.go", "file.json", "other.go", "data.json", "lib.go")
+	res, err := groupBy(input, map[string]any{
+		"pattern": `\.(\w+)$`,
+		"format":  "{{.Key}}: {{.Count}}",
+		"append":  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should have original 5 lines + 2 group lines
+	if len(res.Lines) != 7 {
+		t.Fatalf("got %d lines, want 7: %v", len(res.Lines), res.Lines)
+	}
+	// Original lines preserved at the start
+	if res.Lines[0] != "file.go" {
+		t.Errorf("first line should be original, got %q", res.Lines[0])
+	}
+	// Group summary appended at the end
+	if !strings.HasPrefix(res.Lines[5], "go") {
+		t.Errorf("expected 'go' group, got %q", res.Lines[5])
+	}
+}
+
 func TestDedup(t *testing.T) {
 	input := lines("error: foo", "error: foo", "error: foo", "warn: bar", "warn: bar")
 	res, err := dedup(input, map[string]any{})
@@ -175,6 +199,27 @@ func TestAggregate(t *testing.T) {
 	// Should have "fail: 2" and "pass: 3" (sorted alphabetically)
 	if len(res.Lines) != 2 {
 		t.Fatalf("got %d lines: %v", len(res.Lines), res.Lines)
+	}
+}
+
+func TestAggregateAppend(t *testing.T) {
+	input := lines("PASS foo", "FAIL bar", "PASS baz")
+	res, err := aggregate(input, map[string]any{
+		"patterns": map[string]any{
+			"pass": `^PASS`,
+			"fail": `^FAIL`,
+		},
+		"append": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should have original 3 lines + 2 aggregate lines
+	if len(res.Lines) != 5 {
+		t.Fatalf("got %d lines, want 5: %v", len(res.Lines), res.Lines)
+	}
+	if res.Lines[0] != "PASS foo" {
+		t.Errorf("first line should be original, got %q", res.Lines[0])
 	}
 }
 

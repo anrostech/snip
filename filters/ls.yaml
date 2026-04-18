@@ -1,17 +1,35 @@
 name: "ls"
-version: 1
-description: "Condensed ls output: truncates long listings"
+version: 2
+description: "Compact ls output: reformats long listings to date+name+size, removes noise, extension summary"
 
 match:
   command: "ls"
 
 pipeline:
   - action: "strip_ansi"
+  # Remove "total NNN" summary lines from ls -l
+  - action: "remove_lines"
+    pattern: "^total\\s"
+  # Remove . and .. entries (both plain ls -a and ls -l formats)
+  - action: "remove_lines"
+    pattern: "(?:^|\\s)\\.\\.?$"
+  # Reformat ls -l lines to "date  name  size". Locale-independent: anchors on
+  # the time (HH:MM) or year (YYYY) pattern instead of month names.
+  # Works with English, French, and other locales.
+  - action: "replace"
+    pattern: "^\\S+\\s+\\d+\\s+.*\\s(\\d\\S*)\\s+(\\S+\\s+\\S+\\s+[\\d:]{4,5})\\s+(.+)$"
+    replacement: "$2  $3  $1"
   - action: "compact_path"
   - action: "truncate_lines"
-    max: 100
+    max: 120
   - action: "head"
-    n: 50
-    overflow_msg: "... more files"
+    n: 300
+    overflow_msg: "... +more entries (truncated by snip)"
+  # Append extension summary at the end
+  - action: "group_by"
+    pattern: "\\.([a-zA-Z][a-zA-Z0-9]*)(?:\\s|$)"
+    format: "{{.Key}}: {{.Count}}"
+    top: 8
+    append: true
 
 on_error: "passthrough"

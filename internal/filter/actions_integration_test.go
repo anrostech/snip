@@ -362,6 +362,81 @@ func TestRailsMigrateFilterIntegration(t *testing.T) {
 	t.Logf("rails-migrate: %d -> %d tokens (%.1f%% savings)", inputTokens, outputTokens, savings)
 }
 
+func TestLsFilterIntegration(t *testing.T) {
+	fixture := loadFixture(t, "ls_long_recursive_raw.txt")
+	f := loadFilter(t, "ls.yaml")
+
+	filtered, err := applyPipeline(f, fixture)
+	if err != nil {
+		t.Fatalf("apply pipeline: %v", err)
+	}
+
+	if len(filtered) >= len(fixture) {
+		t.Errorf("filtered (%d) not shorter than input (%d)", len(filtered), len(fixture))
+	}
+
+	// "total" lines must be removed
+	if strings.Contains(filtered, "total 2292") {
+		t.Error("filtered output still contains 'total' lines")
+	}
+
+	// . and .. entries must be removed
+	for _, line := range strings.Split(filtered, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "." || trimmed == ".." {
+			t.Errorf("filtered output still contains %q entry", trimmed)
+		}
+	}
+
+	// Long-format lines should be reformatted (no permissions like drwxr-xr-x)
+	if strings.Contains(filtered, "drwxr-xr-x") || strings.Contains(filtered, "-rw-r--r--") {
+		t.Error("filtered output still contains raw ls -l permissions")
+	}
+
+	// Filenames must survive the pipeline (including French-locale macOS section)
+	for _, name := range []string{"CLAUDE.md", "config.toml", ".gitignore", "session-metadata.jsonl", "golang-expert.md", "svelte-expert.md"} {
+		if !strings.Contains(filtered, name) {
+			t.Errorf("filtered output missing filename %q", name)
+		}
+	}
+
+	// Directory headers must survive (they don't match the replace regex)
+	if !strings.Contains(filtered, "projects") {
+		t.Error("filtered output missing directory header")
+	}
+
+	// Extension summary must be appended (group_by with append: true)
+	if !strings.Contains(filtered, "json") {
+		t.Error("filtered output missing extension summary for 'json'")
+	}
+
+	inputTokens := utils.EstimateTokens(fixture)
+	outputTokens := utils.EstimateTokens(filtered)
+	savings := float64(inputTokens-outputTokens) / float64(inputTokens) * 100
+	t.Logf("ls: %d -> %d tokens (%.1f%% savings)", inputTokens, outputTokens, savings)
+	if savings < 40 {
+		t.Errorf("ls savings %.1f%% < 40%% minimum", savings)
+	}
+}
+
+func TestLsFilterPlainOutput(t *testing.T) {
+	// Plain ls (no -l): just filenames, the pipeline should pass them through
+	f := loadFilter(t, "ls.yaml")
+	input := "CLAUDE.md\nREADME.md\ngo.mod\ngo.sum\ninternal\nfilters\ncmd\n"
+
+	filtered, err := applyPipeline(f, input)
+	if err != nil {
+		t.Fatalf("apply pipeline: %v", err)
+	}
+
+	// All filenames should survive
+	for _, name := range []string{"CLAUDE.md", "README.md", "go.mod", "internal", "filters"} {
+		if !strings.Contains(filtered, name) {
+			t.Errorf("plain ls: missing %q in output", name)
+		}
+	}
+}
+
 func TestGracefulDegradation(t *testing.T) {
 	// Bad filter YAML
 	badYAML := `
