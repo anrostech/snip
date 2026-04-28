@@ -169,58 +169,28 @@ func Run(args []string) int {
 		return runUntrust(cmdArgs)
 
 	case "run":
-		sepIdx := -1
-		for i, a := range cmdArgs {
-			if a == "--" {
-				sepIdx = i
-				break
-			}
-		}
-		if sepIdx < 0 {
-			display.PrintError("run requires -- separator: snip run -- <command> [args...]")
+		targetCmd, targetArgs, errMsg := parseSeparatorArgs(cmdArgs, "run")
+		if errMsg != "" {
+			display.PrintError(errMsg)
 			return 1
 		}
-		if sepIdx > 0 {
-			display.PrintError(fmt.Sprintf("run: unexpected arguments before -- (%s)", strings.Join(cmdArgs[:sepIdx], " ")))
+		if reason := unproxyableReason(targetCmd); reason != "" {
+			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", targetCmd, reason))
 			return 1
 		}
-		runArgs := cmdArgs[1:]
-		if len(runArgs) == 0 {
-			display.PrintError("run requires a command after --")
-			return 1
-		}
-		runCmd := runArgs[0]
-		runCmdArgs := runArgs[1:]
-		if reason := unproxyableReason(runCmd); reason != "" {
-			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", runCmd, reason))
-			return 1
-		}
-		return runPipeline(runCmd, runCmdArgs, flags)
+		return runPipeline(targetCmd, targetArgs, flags)
 
 	case "check":
-		sepIdx := -1
-		for i, a := range cmdArgs {
-			if a == "--" {
-				sepIdx = i
-				break
-			}
-		}
-		if sepIdx < 0 {
-			display.PrintError("check requires -- separator: snip check -- <command> [args...]")
+		targetCmd, targetArgs, errMsg := parseSeparatorArgs(cmdArgs, "check")
+		if errMsg != "" {
+			display.PrintError(errMsg)
 			return 1
 		}
-		checkArgs := cmdArgs[sepIdx+1:]
-		if len(checkArgs) == 0 {
-			display.PrintError("check requires a command after --")
-			return 1
-		}
-		checkCmd := checkArgs[0]
-		checkCmdArgs := checkArgs[1:]
-		if r := unproxyableReason(checkCmd); r != "" {
+		if r := unproxyableReason(targetCmd); r != "" {
 			fmt.Printf("shell builtin: %s\n", r)
 			return 1
 		}
-		return runCheck(checkCmd, checkCmdArgs, flags)
+		return runCheck(targetCmd, targetArgs)
 
 	case "proxy":
 		// Direct passthrough without filtering
@@ -234,6 +204,27 @@ func Run(args []string) int {
 
 	// Filter pipeline
 	return runPipeline(command, cmdArgs, flags)
+}
+
+func parseSeparatorArgs(args []string, cmdName string) (string, []string, string) {
+	sepIdx := -1
+	for i, a := range args {
+		if a == "--" {
+			sepIdx = i
+			break
+		}
+	}
+	if sepIdx < 0 {
+		return "", nil, fmt.Sprintf("%s requires -- separator: snip %s -- <command> [args...]", cmdName, cmdName)
+	}
+	if sepIdx > 0 {
+		return "", nil, fmt.Sprintf("%s: unexpected arguments before -- (%s)", cmdName, strings.Join(args[:sepIdx], " "))
+	}
+	after := args[sepIdx+1:]
+	if len(after) == 0 {
+		return "", nil, fmt.Sprintf("%s requires a command after --", cmdName)
+	}
+	return after[0], after[1:], ""
 }
 
 // runHook handles the "snip hook" subcommand for Claude Code PreToolUse.
@@ -313,7 +304,7 @@ func runPipeline(command string, args []string, flags Flags) int {
 	return pipeline.Run(command, args)
 }
 
-func runCheck(command string, args []string, flags Flags) int {
+func runCheck(command string, args []string) int {
 	cfg, err := config.Load()
 	if err != nil {
 		cfg = config.DefaultConfig()

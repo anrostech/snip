@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -182,5 +184,42 @@ func TestCheckShellBuiltinExit(t *testing.T) {
 	code := Run([]string{"snip", "check", "--", "exit"})
 	if code != 1 {
 		t.Errorf("Run(check -- exit) = %d, want 1", code)
+	}
+}
+
+func TestCheckFilterFound(t *testing.T) {
+	home := t.TempDir()
+	filterDir := filepath.Join(home, ".config", "snip", "filters")
+	if err := os.MkdirAll(filterDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	filterYAML := `name: "git-log"
+version: 1
+description: "Test filter"
+match:
+  command: "git"
+  subcommand: "log"
+  exclude_flags: ["--format", "--pretty", "--graph", "--oneline"]
+inject:
+  args: ["--pretty=format:%h %s", "--no-merges"]
+  defaults:
+    "-n": "10"
+  skip_if_present: ["--merges", "--format", "--pretty", "--oneline"]
+pipeline:
+  - action: "keep_lines"
+    pattern: "\\S"
+on_error: "passthrough"
+`
+	if err := os.WriteFile(filepath.Join(filterDir, "git-log.yaml"), []byte(filterYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("SNIP_CONFIG", filepath.Join(home, ".config", "snip", "config.toml"))
+
+	code := Run([]string{"snip", "check", "--", "git", "log"})
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
 	}
 }
