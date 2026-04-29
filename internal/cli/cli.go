@@ -50,8 +50,8 @@ func Run(args []string) int {
 
 	// Commands that cannot be proxied: they must run in the parent shell
 	// to have any effect. Running them in a subprocess is a silent no-op.
-	if unproxyableReason(command) != "" {
-		fmt.Fprintf(os.Stderr, "snip: %s cannot be proxied (%s)\n", command, unproxyableReason(command))
+	if reason := unproxyableReason(command); reason != "" {
+		fmt.Fprintf(os.Stderr, "snip: %s cannot be proxied (%s)\n", command, reason)
 		return 1
 	}
 
@@ -168,6 +168,35 @@ func Run(args []string) int {
 	case "untrust":
 		return runUntrust(cmdArgs)
 
+	case "run":
+		sepIdx := -1
+		for i, a := range cmdArgs {
+			if a == "--" {
+				sepIdx = i
+				break
+			}
+		}
+		if sepIdx < 0 {
+			display.PrintError("run requires -- separator: snip run -- <command> [args...]")
+			return 1
+		}
+		if sepIdx > 0 {
+			display.PrintError(fmt.Sprintf("run: unexpected arguments before -- (%s)", strings.Join(cmdArgs[:sepIdx], " ")))
+			return 1
+		}
+		runArgs := cmdArgs[1:]
+		if len(runArgs) == 0 {
+			display.PrintError("run requires a command after --")
+			return 1
+		}
+		runCmd := runArgs[0]
+		runCmdArgs := runArgs[1:]
+		if reason := unproxyableReason(runCmd); reason != "" {
+			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", runCmd, reason))
+			return 1
+		}
+		return runPipeline(runCmd, runCmdArgs, flags)
+
 	case "proxy":
 		// Direct passthrough without filtering
 		if len(cmdArgs) == 0 {
@@ -265,19 +294,20 @@ func printUsage() {
 Usage: snip [flags] <command> [args...]
 
 Commands:
-  <command>    Run command through snip filter pipeline
-  init         Install agent integration (default: claude-code)
-  hook         Handle agent PreToolUse/shell hook
-  hook-audit   Show recent hook activity (set SNIP_HOOK_AUDIT=1 to log)
-  gain         Show token savings report
-  cc-economics Show financial impact of token savings by API tier
-  discover     Scan sessions for missed filter opportunities
-  learn        Detect CLI error-correction patterns in sessions
-  verify       Run inline filter tests (--require-all to enforce coverage)
-  config       Show current configuration
-  trust        Trust project-local filter file(s) by SHA-256 hash
-  untrust      Remove filter file(s) from the trust store
-  proxy        Passthrough without filtering
+  run             Run command through snip filter pipeline (use -- to separate)
+  <command>       Run command through snip filter pipeline (implicit)
+  init            Install agent integration (default: claude-code)
+  hook            Handle agent PreToolUse/shell hook
+  hook-audit      Show recent hook activity (set SNIP_HOOK_AUDIT=1 to log)
+  gain            Show token savings report
+  cc-economics    Show financial impact of token savings by API tier
+  discover        Scan sessions for missed filter opportunities
+  learn           Detect CLI error-correction patterns in sessions
+  verify          Run inline filter tests (--require-all to enforce coverage)
+  config          Show current configuration
+  trust           Trust project-local filter file(s) by SHA-256 hash
+  untrust         Remove filter file(s) from the trust store
+  proxy           Passthrough without filtering
 
 Init flags:
   --agent <name>  Agent to configure:
@@ -293,6 +323,8 @@ Flags:
   --help        Show this help
 
 Examples:
+  snip run -- git log -10
+  snip run -- docker build -t app .
   snip git log -10
   snip go test ./...
   snip gain --daily
