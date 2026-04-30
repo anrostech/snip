@@ -9,6 +9,19 @@ import (
 	"testing"
 )
 
+// captureStderr captures stderr during fn execution and returns the captured output.
+func captureStderr(fn func()) string {
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	return buf.String()
+}
+
 func TestUnproxyableCommands(t *testing.T) {
 	tests := []struct {
 		command string
@@ -87,27 +100,6 @@ func TestUnproxyableCommands(t *testing.T) {
 	}
 }
 
-func TestRunRejectsCd(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "cd", "/tmp"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("Run(cd) = %d, want 1", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "cd") {
-		t.Errorf("expected stderr to contain 'cd', got %q", output)
-	}
-}
-
 func TestRunSubcommandMissingSeparator(t *testing.T) {
 	code := Run([]string{"snip", "run", "git", "log"})
 	if code != 1 {
@@ -165,142 +157,6 @@ func TestCheckEmptyAfterSeparator(t *testing.T) {
 	code := Run([]string{"snip", "check", "--"})
 	if code != 1 {
 		t.Errorf("Run(check --) = %d, want 1", code)
-	}
-}
-
-func TestCheckShellBuiltin(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "cd", "/tmp"})
-	if code != 1 {
-		t.Errorf("Run(check -- cd) = %d, want 1", code)
-	}
-}
-
-func TestCheckShellBuiltinExport(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "export", "FOO=bar"})
-	if code != 1 {
-		t.Errorf("Run(check -- export) = %d, want 1", code)
-	}
-}
-
-func TestCheckShellBuiltinSet(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "set", "-e"})
-	if code != 1 {
-		t.Errorf("Run(check -- set) = %d, want 1", code)
-	}
-}
-
-func TestCheckShellBuiltinExit(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "exit"})
-	if code != 1 {
-		t.Errorf("Run(check -- exit) = %d, want 1", code)
-	}
-}
-
-func TestRunRejectsSource(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "source", "script.sh"})
-	_ = w.Close()
-	os.Stderr = old
-var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-	if code != 1 {
-		t.Errorf("Run(source) = %d, want 1", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "source") {
-		t.Errorf("expected stderr to contain 'source', got %q", output)
-	}
-	if !strings.Contains(output, "cannot be proxied") {
-		t.Errorf("expected stderr to contain 'cannot be proxied', got %q", output)
-	}
-}
-
-func TestRunRejectsDot(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", ".", "script.sh"})
-	_ = w.Close()
-	os.Stderr = old
-var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-	if code != 1 {
-		t.Errorf("Run(.) = %d, want 1", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, ".") {
-		t.Errorf("expected stderr to contain '.', got %q", output)
-	}
-	if !strings.Contains(output, "cannot be proxied") {
-		t.Errorf("expected stderr to contain 'cannot be proxied', got %q", output)
-	}
-}
-
-func TestRunSubcommandRejectsUnproxyableErrorMessage(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "run", "--", "cd", "/tmp"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("Run(run -- cd) = %d, want 1", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "cd") {
-		t.Errorf("expected stderr to contain 'cd', got %q", output)
-	}
-	if !strings.Contains(output, "cannot be proxied") {
-		t.Errorf("expected stderr to contain 'cannot be proxied', got %q", output)
-	}
-}
-
-func TestRunGlobalUnproxyableErrorMessage(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "cd", "/tmp"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("Run(cd) = %d, want 1", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "cd") {
-		t.Errorf("expected stderr to contain 'cd', got %q", output)
-	}
-	if !strings.Contains(output, "cannot be proxied") {
-		t.Errorf("expected stderr to contain 'cannot be proxied', got %q", output)
-	}
-}
-
-func TestCheckRejectsSource(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "source", "script.sh"})
-	if code != 1 {
-		t.Errorf("Run(check -- source) = %d, want 1", code)
-	}
-}
-
-func TestCheckRejectsDot(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", ".", "script.sh"})
-	if code != 1 {
-		t.Errorf("Run(check -- .) = %d, want 1", code)
 	}
 }
 
@@ -390,78 +246,6 @@ on_error: "passthrough"
 	}
 }
 
-func TestCheckShellBuiltinOutputIncludesCommand(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "check", "--", "cd", "/tmp"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "cd") {
-		t.Errorf("expected output to contain 'cd', got %q", output)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(output), "snip: cd is") {
-		t.Errorf("expected output to start with 'snip: cd is', got %q", output)
-	}
-}
-
-func TestCheckShellBuiltinSourceOutput(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "check", "--", "source", "script.sh"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "source") {
-		t.Errorf("expected output to contain 'source', got %q", output)
-	}
-	if !strings.Contains(output, "shell builtin") {
-		t.Errorf("expected output to contain 'shell builtin', got %q", output)
-	}
-}
-
-func TestCheckShellBuiltinDotOutput(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "check", "--", ".", "script.sh"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	output := buf.String()
-	if !strings.Contains(output, ".") {
-		t.Errorf("expected output to contain '.', got %q", output)
-	}
-	if !strings.Contains(output, "shell builtin") {
-		t.Errorf("expected output to contain 'shell builtin', got %q", output)
-	}
-}
-
 func TestCheckFilterFoundOutput(t *testing.T) {
 	home := t.TempDir()
 	filterDir := filepath.Join(home, ".config", "snip", "filters")
@@ -514,12 +298,12 @@ on_error: "passthrough"
 
 func TestParseSeparatorArgs(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		cmdName   string
-		wantCmd   string
-		wantArgs  []string
-		wantErr   string
+		name     string
+		args     []string
+		cmdName  string
+		wantCmd  string
+		wantArgs []string
+		wantErr  string
 	}{
 		{
 			name:     "normal case",
@@ -781,59 +565,6 @@ func TestCheckBareCommandNoFilter(t *testing.T) {
 	}
 }
 
-func TestCheckUnproxyableEval(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "check", "--", "eval", "echo", "hi"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(buf.String(), "eval") {
-		t.Errorf("expected stderr to contain 'eval', got %q", buf.String())
-	}
-	if !strings.Contains(buf.String(), "shell builtin") {
-		t.Errorf("expected stderr to contain 'shell builtin', got %q", buf.String())
-	}
-}
-
-func TestCheckUnproxyableWait(t *testing.T) {
-	code := Run([]string{"snip", "check", "--", "wait"})
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
-func TestRunUnproxyableExec(t *testing.T) {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	code := Run([]string{"snip", "run", "--", "exec", "ls"})
-	_ = w.Close()
-	os.Stderr = old
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-	if code != 1 {
-		t.Errorf("expected exit code 1, got %d", code)
-	}
-	if !strings.Contains(buf.String(), "exec") {
-		t.Errorf("expected stderr to contain 'exec', got %q", buf.String())
-	}
-	if !strings.Contains(buf.String(), "cannot be proxied") {
-		t.Errorf("expected stderr to contain 'cannot be proxied', got %q", buf.String())
-	}
-}
-
 func TestCheckFilterExplicitlyEnabled(t *testing.T) {
 	home := t.TempDir()
 	filterDir := filepath.Join(home, ".config", "snip", "filters")
@@ -946,34 +677,45 @@ git-log = false
 
 func TestCheckAndRunUnproxyableFormatConsistent(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    []string
-		wantSub string
+		name string
+		args []string
 	}{
-		{"check cd", []string{"snip", "check", "--", "cd", "/tmp"}, "is a shell builtin"},
-		{"run cd", []string{"snip", "run", "--", "cd", "/tmp"}, "cannot be proxied"},
-		{"global cd", []string{"snip", "cd", "/tmp"}, "cannot be proxied"},
+		{"check cd", []string{"snip", "check", "--", "cd", "/tmp"}},
+		{"run cd", []string{"snip", "run", "--", "cd", "/tmp"}},
+		{"global cd", []string{"snip", "cd", "/tmp"}},
+		{"check source", []string{"snip", "check", "--", "source", "script.sh"}},
+		{"run source", []string{"snip", "run", "--", "source", "script.sh"}},
+		{"global source", []string{"snip", "source", "script.sh"}},
+		{"check dot", []string{"snip", "check", "--", ".", "script.sh"}},
+		{"run dot", []string{"snip", "run", "--", ".", "script.sh"}},
+		{"global dot", []string{"snip", ".", "script.sh"}},
+		{"check export", []string{"snip", "check", "--", "export", "FOO=bar"}},
+		{"run export", []string{"snip", "run", "--", "export", "FOO=bar"}},
+		{"global export", []string{"snip", "export", "FOO=bar"}},
+		{"check eval", []string{"snip", "check", "--", "eval", "echo hi"}},
+		{"run eval", []string{"snip", "run", "--", "eval", "echo hi"}},
+		{"global eval", []string{"snip", "eval", "echo hi"}},
+		{"check set", []string{"snip", "check", "--", "set", "-e"}},
+		{"run set", []string{"snip", "run", "--", "set", "-e"}},
+		{"global set", []string{"snip", "set", "-e"}},
+		{"check exit", []string{"snip", "check", "--", "exit"}},
+		{"run exit", []string{"snip", "run", "--", "exit"}},
+		{"global exit", []string{"snip", "exit"}},
+		{"check exec", []string{"snip", "check", "--", "exec", "ls"}},
+		{"run exec", []string{"snip", "run", "--", "exec", "ls"}},
+		{"global exec", []string{"snip", "exec", "ls"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			old := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-			code := Run(tt.args)
-			_ = w.Close()
-			os.Stderr = old
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-			if code != 1 {
-				t.Errorf("expected exit code 1, got %d", code)
-			}
-			output := buf.String()
-			if !strings.Contains(output, tt.wantSub) {
-				t.Errorf("expected stderr to contain %q, got %q", tt.wantSub, output)
+			output := captureStderr(func() {
+				code := Run(tt.args)
+				if code != 1 {
+					t.Errorf("expected exit code 1, got %d", code)
+				}
+			})
+			if !strings.Contains(output, "cannot be proxied") {
+				t.Errorf("expected stderr to contain 'cannot be proxied', got %q", output)
 			}
 		})
 	}
@@ -1136,119 +878,9 @@ func TestCheckSubcommandPreservesDoubleDash(t *testing.T) {
 	}
 }
 
-func TestRunSubcommandUnproxyableErrorMessageFormat(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		wantMsg string
-	}{
-		{"source", []string{"snip", "run", "--", "source"}, "cannot be proxied"},
-		{"dot", []string{"snip", "run", "--", "."}, "cannot be proxied"},
-		{"export", []string{"snip", "run", "--", "export"}, "cannot be proxied"},
-		{"eval", []string{"snip", "run", "--", "eval"}, "cannot be proxied"},
-		{"set", []string{"snip", "run", "--", "set"}, "cannot be proxied"},
-		{"exit", []string{"snip", "run", "--", "exit"}, "cannot be proxied"},
-		{"exec", []string{"snip", "run", "--", "exec"}, "cannot be proxied"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			old := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-			code := Run(tt.args)
-			_ = w.Close()
-			os.Stderr = old
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-			if code != 1 {
-				t.Errorf("expected exit code 1, got %d", code)
-			}
-			output := buf.String()
-			if !strings.Contains(output, tt.wantMsg) {
-				t.Errorf("expected stderr to contain %q, got %q", tt.wantMsg, output)
-			}
-		})
+func TestRunCommandHelpAfterSeparator(t *testing.T) {
+	code := Run([]string{"snip", "run", "--", "git", "--help"})
+	if code != 0 {
+		t.Errorf("Run(run -- git --help) = %d, want 0", code)
 	}
 }
-
-func TestCheckSubcommandUnproxyableErrorMessageFormat(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		wantMsg string
-	}{
-		{"source", []string{"snip", "check", "--", "source"}, "is a shell builtin"},
-		{"dot", []string{"snip", "check", "--", "."}, "is a shell builtin"},
-		{"export", []string{"snip", "check", "--", "export"}, "is a shell builtin"},
-		{"eval", []string{"snip", "check", "--", "eval"}, "is a shell builtin"},
-		{"set", []string{"snip", "check", "--", "set"}, "is a shell builtin"},
-		{"exit", []string{"snip", "check", "--", "exit"}, "is a shell builtin"},
-		{"exec", []string{"snip", "check", "--", "exec"}, "is a shell builtin"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			old := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-			code := Run(tt.args)
-			_ = w.Close()
-			os.Stderr = old
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-			if code != 1 {
-				t.Errorf("expected exit code 1, got %d", code)
-			}
-			output := buf.String()
-			if !strings.Contains(output, tt.wantMsg) {
-				t.Errorf("expected stderr to contain %q, got %q", tt.wantMsg, output)
-			}
-		})
-	}
-}
-
-func TestGlobalUnproxyableErrorMessageFormat(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		wantMsg string
-	}{
-		{"cd", []string{"snip", "cd"}, "cannot be proxied"},
-		{"source", []string{"snip", "source"}, "cannot be proxied"},
-		{"eval", []string{"snip", "eval"}, "cannot be proxied"},
-		{"exec", []string{"snip", "exec"}, "cannot be proxied"},
-		{"set", []string{"snip", "set"}, "cannot be proxied"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			old := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-			code := Run(tt.args)
-			_ = w.Close()
-			os.Stderr = old
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(r); err != nil {
-		t.Fatalf("ReadFrom: %v", err)
-	}
-
-			if code != 1 {
-				t.Errorf("expected exit code 1, got %d", code)
-			}
-			output := buf.String()
-			if !strings.Contains(output, tt.wantMsg) {
-				t.Errorf("expected stderr to contain %q, got %q", tt.wantMsg, output)
-			}
-		})
-	}
-}
-
-

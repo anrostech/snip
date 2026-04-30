@@ -186,8 +186,8 @@ func Run(args []string) int {
 			display.PrintError(errMsg)
 			return 1
 		}
-		if r := unproxyableReason(targetCmd); r != "" {
-			display.PrintError(fmt.Sprintf("%s is a shell builtin (%s)", targetCmd, r))
+		if reason := unproxyableReason(targetCmd); reason != "" {
+			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", targetCmd, reason))
 			return 1
 		}
 		return runCheck(targetCmd, targetArgs, flags)
@@ -338,19 +338,26 @@ func runCheck(command string, args []string, flags Flags) int {
 		return 1
 	}
 
-	enabled := true
-	if cfg.Filters.Enable != nil {
-		if e, ok := cfg.Filters.Enable[f.Name]; ok && !e {
-			enabled = false
-		}
-	}
-	if !enabled {
+	if !isFilterEnabled(cfg, f.Name) {
 		fmt.Printf("filter disabled: %s\n", f.Name)
 		return 1
 	}
 
 	fmt.Printf("filter: %s\n", f.Name)
 	return 0
+}
+
+// isFilterEnabled returns whether a filter is enabled. A nil map means all
+// enabled; a missing entry defaults to enabled; only explicit false disables.
+func isFilterEnabled(cfg *config.Config, name string) bool {
+	if cfg.Filters.Enable == nil {
+		return true
+	}
+	enabled, ok := cfg.Filters.Enable[name]
+	if !ok {
+		return true
+	}
+	return enabled
 }
 
 func printUsage() {
