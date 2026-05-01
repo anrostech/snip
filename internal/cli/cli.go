@@ -51,7 +51,7 @@ func Run(args []string) int {
 	// Commands that cannot be proxied: they must run in the parent shell
 	// to have any effect. Running them in a subprocess is a silent no-op.
 	if reason := unproxyableReason(command); reason != "" {
-		fmt.Fprintf(os.Stderr, "snip: %s cannot be proxied (%s)\n", command, reason)
+		display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", command, reason))
 		return 1
 	}
 
@@ -169,33 +169,28 @@ func Run(args []string) int {
 		return runUntrust(cmdArgs)
 
 	case "run":
-		sepIdx := -1
-		for i, a := range cmdArgs {
-			if a == "--" {
-				sepIdx = i
-				break
-			}
-		}
-		if sepIdx < 0 {
-			display.PrintError("run requires -- separator: snip run -- <command> [args...]")
+		targetCmd, targetArgs, errMsg := parseSeparatorArgs(cmdArgs, "run")
+		if errMsg != "" {
+			display.PrintError(errMsg)
 			return 1
 		}
-		if sepIdx > 0 {
-			display.PrintError(fmt.Sprintf("run: unexpected arguments before -- (%s)", strings.Join(cmdArgs[:sepIdx], " ")))
+		if reason := unproxyableReason(targetCmd); reason != "" {
+			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", targetCmd, reason))
 			return 1
 		}
-		runArgs := cmdArgs[1:]
-		if len(runArgs) == 0 {
-			display.PrintError("run requires a command after --")
+		return runPipeline(targetCmd, targetArgs, flags)
+
+	case "check":
+		targetCmd, targetArgs, errMsg := parseSeparatorArgs(cmdArgs, "check")
+		if errMsg != "" {
+			display.PrintError(errMsg)
 			return 1
 		}
-		runCmd := runArgs[0]
-		runCmdArgs := runArgs[1:]
-		if reason := unproxyableReason(runCmd); reason != "" {
-			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", runCmd, reason))
+		if reason := unproxyableReason(targetCmd); reason != "" {
+			display.PrintError(fmt.Sprintf("%s cannot be proxied (%s)", targetCmd, reason))
 			return 1
 		}
-		return runPipeline(runCmd, runCmdArgs, flags)
+		return runCheck(targetCmd, targetArgs, flags)
 
 	case "proxy":
 		// Direct passthrough without filtering
@@ -209,6 +204,27 @@ func Run(args []string) int {
 
 	// Filter pipeline
 	return runPipeline(command, cmdArgs, flags)
+}
+
+func parseSeparatorArgs(args []string, cmdName string) (string, []string, string) {
+	sepIdx := -1
+	for i, a := range args {
+		if a == "--" {
+			sepIdx = i
+			break
+		}
+	}
+	if sepIdx < 0 {
+		return "", nil, fmt.Sprintf("%s requires -- separator: snip %s -- <command> [args...]", cmdName, cmdName)
+	}
+	if sepIdx > 0 {
+		return "", nil, fmt.Sprintf("%s: unexpected arguments before -- (%s)", cmdName, strings.Join(args[:sepIdx], " "))
+	}
+	after := args[sepIdx+1:]
+	if len(after) == 0 {
+		return "", nil, fmt.Sprintf("%s requires a command after --", cmdName)
+	}
+	return after[0], after[1:], ""
 }
 
 // runHook handles the "snip hook" subcommand for Claude Code PreToolUse.
@@ -288,6 +304,62 @@ func runPipeline(command string, args []string, flags Flags) int {
 	return pipeline.Run(command, args)
 }
 
+func runCheck(command string, args []string, flags Flags) int {
+	cfg, err := config.Load()
+	if err != nil {
+		if flags.Verbose > 0 {
+			fmt.Fprintf(os.Stderr, "snip: config error: %v, using defaults\n", err)
+		}
+		cfg = config.DefaultConfig()
+	}
+
+	filters, err := filter.LoadAll(cfg.Filters.Dirs())
+	if err != nil {
+		display.PrintError(fmt.Sprintf("load filters: %v", err))
+		return 1
+	}
+
+	registry := filter.NewRegistry(filters)
+
+	subcommand := ""
+	filterArgs := args
+	if len(args) > 0 {
+		subcommand = args[0]
+		filterArgs = args[1:]
+	}
+
+	f := registry.Match(command, subcommand, filterArgs)
+	if f == nil {
+		if registry.HasAnyFilter(command, subcommand) {
+			fmt.Println("no filter: excluded by flags")
+		} else {
+			fmt.Println("no filter")
+		}
+		return 1
+	}
+
+	if !isFilterEnabled(cfg, f.Name) {
+		fmt.Printf("filter disabled: %s\n", f.Name)
+		return 1
+	}
+
+	fmt.Printf("filter: %s\n", f.Name)
+	return 0
+}
+
+// isFilterEnabled returns whether a filter is enabled. A nil map means all
+// enabled; a missing entry defaults to enabled; only explicit false disables.
+func isFilterEnabled(cfg *config.Config, name string) bool {
+	if cfg.Filters.Enable == nil {
+		return true
+	}
+	enabled, ok := cfg.Filters.Enable[name]
+	if !ok {
+		return true
+	}
+	return enabled
+}
+
 func printUsage() {
 	usage := `snip v%s — CLI Token Killer
 
@@ -295,6 +367,7 @@ Usage: snip [flags] <command> [args...]
 
 Commands:
   run             Run command through snip filter pipeline (use -- to separate)
+  check           Check if a command would be filtered (use -- to separate)
   <command>       Run command through snip filter pipeline (implicit)
   init            Install agent integration (default: claude-code)
   hook            Handle agent PreToolUse/shell hook
@@ -347,12 +420,28 @@ Examples:
 
 // unproxyableReason returns a human-readable reason if the command cannot be
 // proxied through an external process, or "" if it can.
+// Commands are grouped by the shell feature they affect; each group covers
+// bash, zsh, and fish builtins that would be a silent no-op in a subprocess.
 func unproxyableReason(command string) string {
 	switch command {
-	case "cd":
+	case "cd", "chdir", "pushd", "popd":
 		return "it must run in the parent shell to change directory"
 	case "source", ".":
+		return "it must run in the parent shell to execute in the current context"
+	case "export", "unset", "alias", "unalias", "readonly", "declare", "typeset", "local", "shift", "read", "mapfile", "readarray", "let", "getopts":
 		return "it must run in the parent shell to modify the environment"
+	case "set", "shopt", "setopt", "unsetopt", "emulate":
+		return "it must run in the parent shell to set shell options"
+	case "eval":
+		return "it must run in the parent shell to evaluate in current context"
+	case "exec":
+		return "it must run in the parent shell to replace the current process"
+	case "exit", "logout", "return", "break", "continue":
+		return "it must run in the parent shell to control flow"
+	case "wait", "bg", "fg", "disown", "jobs", "suspend":
+		return "it must run in the parent shell to access the job table"
+	case "bindkey", "bind", "complete", "compopt", "compinit", "zstyle", "autoload", "zmodload", "enable", "disable", "abbr", "functions", "hash", "trap", "umask", "ulimit":
+		return "it must run in the parent shell to configure the shell"
 	}
 	return ""
 }
