@@ -1,6 +1,6 @@
 name: "git-status"
-version: 1
-description: "Categorized git status with file counts"
+version: 2
+description: "Compact git status: porcelain lines plus status code summary"
 
 match:
   command: "git"
@@ -16,8 +16,25 @@ pipeline:
     pattern: "\\S"
   - action: "group_by"
     pattern: "^(.{2})"
-    format: "{{.Key}} ({{.Count}} files)"
-  - action: "format_template"
-    template: "{{.count}} changes:\n{{.lines}}"
+    format: "{{.Key}}: {{.Count}}"
+    append: true
 
 on_error: "passthrough"
+
+tests:
+  - name: "porcelain output preserves filenames and appends status summary"
+    input: |
+      M  internal/cli/cli.go
+      M  internal/engine/pipeline.go
+      A  internal/filter/kubectl.go
+      ?? filters/kubectl-get-pods.yaml
+      ?? docs/kubectl-filters.md
+    expected: |
+      M  internal/cli/cli.go
+      M  internal/engine/pipeline.go
+      A  internal/filter/kubectl.go
+      ?? filters/kubectl-get-pods.yaml
+      ?? docs/kubectl-filters.md
+      M : 2
+      ??: 2
+      A : 1
